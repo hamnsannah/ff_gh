@@ -1,0 +1,32 @@
+
+How functions fit together
+
+data entry happens via Google Sheets using the googlesheets package
+The sheets set up right now are 1) the ingredients and componets of products (e.g. "Fake SC Ingredient Info"), 
+2) the price of those raw ingredients (e.g. "Fake SC Ingredient Costs"),
+3) the retail prices they're sold for (e.g. "Fake SC Pricing Info")
+
+These are imported with s.gsheet.imp()
+
+-- Processing ingredient cost data --
+This would start with something like costs.ing <- g.sheet.imp("Fake SC Ingredient Costs")
+
+next it would get transformed to metric with costs.ing.metric <- unit.converter(costs.ing, quantity.col.num = 3, units.col.num = 4)
+
+lastly, switch to to costs for 1 of them with costs.ing.metric.one <- costs.per.unit(costs.ing.metric, price.col.num = 5, quantity.col.num = 6)
+
+stop there in this preparatory work flow
+
+-- Processing ingredients of products
+
+import with product.ingredients <- g.sheet.imp("Fake SC Ingredient Info")
+next reshape from wide data to long data prod.ing.long <- reshape.costs.ing(product.ingredients, costs.ing.metric.one, 1:9)
+That one uses the converted costs from earlier work flow, and it wraps around unit converter, so that step is complete for this data at this point
+
+-- Processing labor costs --
+
+This uses same sheet as ingredients because it's another cost, but doesn't need unit converter because it's all labor hours not cups and ounces.
+
+reshape it with something like prod.labor.long <- reshape.costs.labor(product.ingredients, 1:9)
+
+these two dataframes can be combined with rbind for example, in order to calculate profit, which functions like another cost for the for the purpose of graphing.  This is done via profit.calc.append.R

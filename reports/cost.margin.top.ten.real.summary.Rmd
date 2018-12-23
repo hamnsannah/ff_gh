@@ -1,0 +1,492 @@
+---
+title: "Cost and Margin Analysis for Shane's Candies"
+author: "Allocate Analytics"
+date: "October 20, 2018"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+####### Refer to draft email to myself for further questions on data.  Biggest thing is no quantity of chocolate for Buttercreams
+### This is most updated as of 9/16/18
+
+### Read in functions ###
+
+s.gsheet.imp <- function(googlesheet.name){
+  library(googlesheets)
+  gs_auth()
+  source.gsheet <- gs_title(googlesheet.name)
+  imported.data <- gs_read(source.gsheet)#, range = "A1:AQ100")
+  imported.data <- as.data.frame(imported.data)
+  print(imported.data)
+  imported.data
+}
+
+unit.converter <- function(df, quantity.col.num, units.col.num){
+  conversions <- data.frame("eng.meas" = c("unit(s)", "ounce(s) fl","cup(s) fl", "quart(s)", "gallon(s)", "tablespoon(s) fl", "cup(s) dry", "tablespoon(s) dry", "ounce(s) dry", "lb(s)"),
+                            "to.metric" = c(1, 29.57, 240, 15, 946.35, 3840, 190, 12, 30, 453.59),
+                            "metric.unit" = c("units", "ml","ml", "ml", "ml", "ml", "g", "g", "g", "g"))
+  library(dplyr)
+  
+  #print(conversions)
+  
+  num.convert <- function(quantity.col, eng.units.col){
+    this.conversion <- conversions %>%
+      filter(eng.meas == eng.units.col)
+    #print(this.conversion)
+    quantity.col <- quantity.col*this.conversion$to.metric
+  }
+  
+  num.col <- as.numeric(mapply(num.convert, df[,quantity.col.num], df[,units.col.num]))
+  #print(num.col)
+  
+  unit.convert <- function(eng.units.col){
+    this.conversion <- conversions[conversions$eng.meas == eng.units.col,]
+    eng.units.col <- as.character(this.conversion$metric.unit)
+    # use as.character() on the result after sapply
+    eng.units.col
+  }
+  
+  units.col <- as.character(sapply(df[,units.col.num], unit.convert))
+  print(units.col)
+  
+  df[,quantity.col.num] <- num.col
+  df[,units.col.num] <- units.col
+
+  #print(df)
+  df
+}
+
+costs.per.unit <- function(unit.converted.cost.list.df, price.col.num, quantity.col.num){
+  cost.df <- unit.converted.cost.list.df
+  unit.divide <- function(a,b){a <- (a/b)}
+  price.per.unit.col <- mapply(unit.divide, cost.df[,price.col.num], cost.df[,quantity.col.num])
+  #quantity.one.col <- 1
+  
+  cost.df[,price.col.num] <- price.per.unit.col
+  cost.df[,quantity.col.num] <- 1
+  cost.df
+}
+
+reshape.costs.ing <- function(imported.ingredient.info.df, raw.unit.costs.df, rows.of.products){
+  conv.df <- imported.ingredient.info.df
+  
+  unit.converter <- function(df, quantity.col.num, units.col.num){
+    conversions <- data.frame("eng.meas" = c("unit(s)", "ounce(s) fl","cup(s) fl", "quart(s)", "gallon(s)", "tablespoon(s) fl", "cup(s) dry", "tablespoon(s) dry", "ounce(s) dry", "lb(s)"),
+                              "to.metric" = c(1, 29.57, 240, 15, 946.35, 3840, 190, 12, 30, 453.59),
+                              "metric.unit" = c("units", "ml","ml", "ml", "ml", "ml", "g", "g", "g", "g"))
+    library(dplyr)
+    
+    print(conversions)
+    
+    num.convert <- function(quantity.col, eng.units.col){
+      this.conversion <- conversions %>%
+        filter(eng.meas == eng.units.col)
+      #print(this.conversion)
+      quantity.col <- quantity.col*this.conversion$to.metric
+    }
+    
+    num.col <- as.numeric(as.vector(mapply(num.convert, df[,quantity.col.num], df[,units.col.num])))
+    print(num.col)
+    
+    unit.convert <- function(eng.units.col){
+      this.conversion <- conversions[conversions$eng.meas == eng.units.col,]
+      eng.units.col <- as.character(this.conversion$metric.unit)
+      # use as.character() on the result after sapply
+      eng.units.col
+    }
+    
+    units.col <- as.character(sapply(df[,units.col.num], unit.convert))
+    print(units.col)
+    
+    df[,quantity.col.num] <- num.col
+    df[,units.col.num] <- units.col
+    
+    print(df)
+    df
+  }
+  
+  colnames(conv.df)[3:32] <- rep(c("Ing.or.Phase", "Quantity", "Unit"), 10)
+  all.long.df <- data.frame()
+  for(i in rows.of.products){
+    print(i)
+    if(!is.na(conv.df[i,1])){
+  ingreds <- rbind(conv.df[i,3:5], conv.df[i,6:8], conv.df[i,9:11], conv.df[i, 12:14], 
+                   conv.df[i, 15:17], conv.df[i, 18:20], conv.df[i, 21:23], conv.df[i, 24:26]
+                   , conv.df[i, 27:29], conv.df[i, 30:32])
+  print("line 114")
+  print(ingreds)
+  ingreds <- ingreds[!is.na(ingreds$Unit),]
+  long.df <- cbind("Product" = conv.df[i,1], "Batch.Size" = conv.df[i,2], "Cost.Type" = "Ingredient", ingreds)
+  all.long.df <- rbind(all.long.df, long.df)
+    } #ends the NA check
+  }
+  
+  all.long.df <- unit.converter(all.long.df,5,6)
+  
+  all.long.merged <- merge(all.long.df, raw.unit.costs.df[,1:2], by.x = "Ing.or.Phase", by.y = "Ingredient Name", 
+                           all.x = TRUE, all.y = FALSE)
+  all.long.merged$Cost <- all.long.merged$`Price Paid`*all.long.merged$Quantity
+  all.long.merged$Batch.Size <- as.numeric(all.long.merged$Batch.Size)
+  all.long.merged$Cost.Div.Batch <- all.long.merged$Cost/all.long.merged$Batch.Size
+  all.long.merged <- all.long.merged %>%
+    select(Product, Batch.Size, Cost.Type, Ing.or.Phase, Quantity, Unit, Cost, Cost.Div.Batch) %>%
+    arrange(Product)
+  print(all.long.merged)
+  all.long.merged
+
+}
+
+reshape.costs.labor <- function(imported.ingredient.info.df, rows.of.products){
+  library(dplyr)
+
+  conv.df <- imported.ingredient.info.df
+  temp.col.names <- rep(c("Length", "People"), 5)
+  colnames(conv.df)[34:43] <- temp.col.names
+  
+  #colnames(conv.df)[3:32] <- rep(c("Ing.or.Phase", "Quantity", "Units"), 10)
+  all.long.df <- data.frame()
+  for(i in rows.of.products){
+    print(i)
+    if(!is.na(conv.df[i,1])){
+      labors <- rbind(conv.df[i,34:35], conv.df[i,36:37], conv.df[i,38:39], conv.df[i, 40:41], 
+                       conv.df[i, 42:43])
+      labor.hours.df <- cbind(labors, labor.hours = labors[,1]*labors[,2])
+
+      labor.hours.df <- labor.hours.df[!is.na(labor.hours.df$labor.hours),]
+      print(labor.hours.df)
+      long.df <- cbind("Product" = conv.df[i,1], "Batch.Size" = conv.df[i,2], 
+                       "Cost.Type" = "Labor", "Ing.or.Phase" = paste("Phase", seq_len(nrow(labor.hours.df))),
+                       "Quantity" = labor.hours.df$labor.hours, "Unit" = "labor hours")
+      long.df <- as.data.frame(long.df)
+
+      pay.rate <- as.numeric(conv.df[i,33])
+      #long.df$Quantity <- as.numeric(long.df$Quantity) ########test
+      long.df$Quantity <- as.numeric(as.vector(long.df$Quantity))
+      long.df$Cost <- long.df$Quantity*pay.rate
+      long.df$Batch.Size <- as.numeric(as.vector(long.df$Batch.Size))
+      #print(head(long.df$Batch.Size, 20))
+      long.df$Cost.Div.Batch <- long.df$Cost/long.df$Batch.Size
+      print(long.df)      
+      all.long.df <- rbind(all.long.df, long.df)
+    } #ends the NA check
+  }
+  
+  print(all.long.df)
+  all.long.df
+}
+
+profit.calc.append <- function(combined.df, imported.retail.price.df){
+  print("need df with both ingredients and phases which includes Cost.Div.Batch column")
+  
+  cost.agg <- aggregate(Cost.Div.Batch ~ Product + Batch.Size, combined.df, sum)
+  print(cost.agg)
+  
+  price.df <- imported.retail.price.df
+  print(str(price.df))
+
+  cost.price <- merge(cost.agg, price.df, all.x=TRUE, all.y=FALSE)
+  cost.price <- cost.price %>%
+    mutate("Profit" = `Retail Price`-Cost.Div.Batch, "Margin" = Profit/`Retail Price`)
+  print(cost.price)
+  new.rows <- as.data.frame(cbind("Product" = as.character(cost.price$Product), "Batch.Size" = cost.price$Batch.Size, "Cost.Type" = "Profit", "Ing.or.Phase" = NA, "Quantity" = 1, "Unit" = "units", "Cost" = (cost.price$Profit*cost.price$Batch.Size), "Cost.Div.Batch" = cost.price$Profit))
+  print(colnames(new.rows))
+  combined.df <- rbind(combined.df, new.rows)
+
+}
+
+profit.margin.kable.prep <- function(df.with.profit){
+  require(knitr)
+  df.with.profit$Cost.Div.Batch <- as.numeric(df.with.profit$Cost.Div.Batch)
+  prof.agg <- aggregate(Cost.Div.Batch ~ Product + Cost.Type, df.with.profit, sum)
+  
+  #create subsets and rename columns for widening
+  ing.df <- filter(prof.agg, Cost.Type == "Ingredient")
+  colnames(ing.df) <- c("Product", "Ing.Label", "Ingredients")
+  labor.df <- filter(prof.agg, Cost.Type == "Labor")
+  colnames(labor.df) <- c("Product", "Labor.Label", "Labor")
+  profit.df <- filter(prof.agg, Cost.Type == "Profit")
+  colnames(profit.df) <- c("Product", "Profit.Label", "Profit")
+  
+  #join new dfs wider
+  new.df <- left_join(ing.df, labor.df)
+  new.df2 <- left_join(new.df, profit.df)
+  new.df2 <- mutate(new.df2, "Price" = new.df2$Ingredients + new.df2$Labor + new.df2$Profit, "Margin" = Profit/Price)
+  
+  #get columns I want in order
+  pretty.df <- select(new.df2, Product, Margin, Price, Profit, Ingredients, Labor)
+  
+  #make columns pretty
+  pretty.df$Ingredients <- paste0("$", format(round(pretty.df$Ingredients, 2), nsmall = 2))
+  pretty.df$Price <- paste0("$", format(round(pretty.df$Price, 2), nsmall = 2))
+  pretty.df$Profit <- paste0("$", format(round(pretty.df$Profit, 2), nsmall = 2))
+  pretty.df$Labor <- paste0("$", format(round(pretty.df$Labor, 2), nsmall = 2))
+  pretty.df$Margin <- paste0(round(pretty.df$Margin*100, 1), "%")
+  
+  pretty.df <- arrange(pretty.df, desc(Margin))
+  pretty.df
+
+}
+
+component.plot2 <- function(df, product.to.plot, palette.vector){
+
+  library(ggplot2)
+  library(scales)
+  library(dplyr)  
+  #df <- arrange(df, Ing.or.Phase)
+  
+  ingredient.levels <- df %>%
+    filter(Cost.Type == "Ingredient") %>%
+    select(Ing.or.Phase)
+  ingredient.levels.unique <- unique(ingredient.levels)
+  #df$Ing.or.Phase <- factor(df$Ing.or.Phase, 
+  #                          levels = c("Phase 8", "Phase 7", "Phase 6", "Phase 5", 
+  #                                     "Phase 4", "Phase 3", "Phase 2", "Phase 1", 
+  #                                     "Cocoa", "Sugar", "Milk", "Cashews", "Frosting", 
+  #                                     "Eggs", "Flour", "Caramel", "Vanilla bean", 
+  #                                     "Liquid Sugar", "Lollipop sticks", "Wrapper"))
+ df$Ing.or.Phase <- factor(df$Ing.or.Phase, 
+                            levels = c("Phase 2", "Phase 1", 
+                                       ingredient.levels.unique$Ing.or.Phase))
+  df <- filter(df, !is.na(Ing.or.Phase))
+  #print(df)
+  #print(str(df))
+  bar.plot1 <- ggplot(data=filter(df, Product == product.to.plot), 
+                      aes(x=Ing.or.Phase, y=Cost.Div.Batch, group = Cost.Type)) + 
+    geom_col(aes(fill = Cost.Type), position = "dodge") +
+    #geom_label(aes(label = factor(Ing.or.Phase)), position = position_stack(vjust = 0.5))+
+    scale_y_continuous(labels = scales::dollar) +
+    scale_fill_manual(values = palette.vector) +
+    #theme(legend.position = "none") +
+    labs(x= "Cost Type", y="Cost in One Unit", title = paste0("Cost Breakdown for ", product.to.plot)) +
+    theme_dark() +
+    theme(legend.title = element_blank()) +
+    coord_flip() +
+    NULL
+  
+  bar.plot1
+}
+
+full.stack.plot <- function(df, product.to.plot, palette.vector, all.prod = FALSE, levels.for.order = NULL){
+  
+  library(ggplot2)
+  library(scales)
+  library(dplyr)
+
+  df$Cost.Div.Batch <- as.numeric(as.vector(df$Cost.Div.Batch))
+  
+  df.agg <- aggregate(Cost.Div.Batch ~ Product + Cost.Type, df, sum)
+  
+  df.agg$Cost.Type <- factor(df.agg$Cost.Type, levels = c("Labor", "Ingredient", "Profit"))
+  bar.plot1 <- 0
+if(all.prod == FALSE){
+  bar.plot1 <- ggplot(data=filter(df.agg, Product == product.to.plot), aes(x=Product, y=Cost.Div.Batch)) + 
+    #bar.plot1 <- ggplot(data=df.agg, aes(x=Product, y=Cost.Div.Batch)) + 
+      geom_col(aes(fill = factor(Cost.Type, levels = c("Labor", "Ingredient", "Profit"))), 
+               position = position_stack(reverse = TRUE), width = .4) +
+      #geom_label(aes(label = factor(Cost.Type, levels = c("Labor", "Ingredient", "Profit"))), 
+      #               position = position_stack(reverse = FALSE, vjust = 0.5))+
+      scale_y_continuous(labels = scales::dollar) +
+      scale_fill_manual(values = palette.vector) +
+      labs(x="Product", y="Costs and Profit in Retail Price", subtitle = "A green bar below zero indicates a loss", title = paste0("Costs and Profit for ", product.to.plot)) +
+      theme_dark() +
+    theme(legend.title = element_blank()) +
+    NULL
+} else {
+  reverse.levels <- rev(levels.for.order)
+  df.agg$Product <- factor(df.agg$Product, levels = reverse.levels)
+  bar.plot1 <- ggplot(data=filter(df.agg), aes(x=Product, y=Cost.Div.Batch)) + 
+    #bar.plot1 <- ggplot(data=df.agg, aes(x=Product, y=Cost.Div.Batch)) + 
+      geom_col(aes(fill = factor(Cost.Type, levels = c("Labor", "Ingredient", "Profit"))), 
+               position = position_stack(reverse = TRUE), width = .4) +
+      #geom_label(aes(label = factor(Cost.Type, levels = c("Labor", "Ingredient", "Profit"))), 
+      #               position = position_stack(reverse = FALSE, vjust = 0.5))+
+      scale_y_continuous(labels = scales::dollar) +
+      scale_fill_manual(values = palette.vector) +
+      labs(x="Product", y="Costs and Profit in Retail Price", subtitle = "A green bar below zero indicates a loss", title = paste0("Costs and Profit for ", product.to.plot)) +
+      theme_dark() +
+    theme(legend.title = element_blank()) +
+    coord_flip()
+    NULL
+  
+  
+  
+  
+}
+  bar.plot1
+}
+
+# just read in the products for titles
+product.ingredients <- s.gsheet.imp("Copy of SC Product Cost Components")
+#product.ingredients <- s.gsheet.imp("Bulk Ingredient Costs")
+
+product.vec <- product.ingredients[,1]
+
+### Process Data ###
+
+# import store's cost to purchase ingredients:
+ingredient.costs <- s.gsheet.imp("Bulk Ingredient Costs") 
+
+# convert to metric:
+ing.costs.metric <- unit.converter(ingredient.costs, quantity.col.num = 3, units.col.num = 4) 
+
+# convert to one metric unit:
+ing.costs.metric.one <- costs.per.unit(ing.costs.metric, price.col.num = 2, quantity.col.num = 3) 
+
+#import data on which ingredients are in products:
+ingredient.data <- s.gsheet.imp("Copy of SC Product Cost Components")
+
+ing.data.long <- reshape.costs.ing(ingredient.data, ing.costs.metric.one, rows.of.products = 1:9)
+
+labor.data.long <- reshape.costs.labor(ingredient.data, rows.of.products = 1:9)
+
+combined.data.long <- rbind(ing.data.long, labor.data.long)
+
+retail.price.of.products <- s.gsheet.imp("Retail Prices of Selected Products")
+
+combined.data.long.prof <- profit.calc.append(combined.data.long, retail.price.of.products)
+
+kable.data <- profit.margin.kable.prep(combined.data.long.prof)
+
+next.product <- product.vec[1] # this avoids having to change the subset number in multiple places 
+```
+
+# Summary Info
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+choc.green.swap <- c("#E8D5A1", "#6F2919", "#98F95D")
+full.stack.plot(combined.data.long.prof, next.product, choc.green.swap, 
+all.prod = TRUE, levels.for.order = kable.data$Product)
+kable(kable.data)
+
+```
+
+# Cost and Margin for `r next.product`
+
+These charts show the cost components of the top selling products.  The chocolate color shows the physical ingredients and the vanilla color shows the labor.  The first chart focuses on individual ingredients and phases of production while the second one focuses on what portion of the total retail price is comprised of ingredients, labor, and profit.  
+
+```{r product1, echo=FALSE, message=FALSE, warning=FALSE, fig.height=3.6}
+choc.green <- c("#6F2919", "#E8D5A1", "#98F95D")
+
+component.plot2(combined.data.long, next.product, choc.green)
+
+choc.green.swap <- c("#E8D5A1", "#6F2919", "#98F95D")
+
+full.stack.plot(combined.data.long.prof, next.product, choc.green.swap)
+
+########
+next.product <- product.vec[2] # this avoids having to change the subset number in multiple places 
+```
+
+# Cost and Margin for `r next.product`
+
+```{r product2, echo=FALSE, message=FALSE, warning=FALSE}
+choc.green <- c("#6F2919", "#E8D5A1", "#98F95D")
+
+component.plot2(combined.data.long, next.product, choc.green)
+
+choc.green.swap <- c("#E8D5A1", "#6F2919", "#98F95D")
+
+full.stack.plot(combined.data.long.prof, next.product, choc.green.swap)
+
+next.product <- product.vec[3] # this avoids having to change the subset number in multiple places 
+```
+
+# Cost and Margin for `r next.product`
+
+```{r product3, echo=FALSE, message=FALSE, warning=FALSE}
+choc.green <- c("#6F2919", "#E8D5A1", "#98F95D")
+
+component.plot2(combined.data.long, next.product, choc.green)
+
+choc.green.swap <- c("#E8D5A1", "#6F2919", "#98F95D")
+
+full.stack.plot(combined.data.long.prof, next.product, choc.green.swap)
+
+next.product <- product.vec[4] # this avoids having to change the subset number in multiple places 
+```
+
+# Cost and Margin for `r next.product`
+
+```{r product4, echo=FALSE, message=FALSE, warning=FALSE}
+choc.green <- c("#6F2919", "#E8D5A1", "#98F95D")
+
+component.plot2(combined.data.long, next.product, choc.green)
+
+choc.green.swap <- c("#E8D5A1", "#6F2919", "#98F95D")
+
+full.stack.plot(combined.data.long.prof, next.product, choc.green.swap)
+
+next.product <- product.vec[5] # this avoids having to change the subset number in multiple places 
+```
+
+# Cost and Margin for `r next.product`
+
+```{r product5, echo=FALSE, message=FALSE, warning=FALSE}
+choc.green <- c("#6F2919", "#E8D5A1", "#98F95D")
+
+component.plot2(combined.data.long, next.product, choc.green)
+
+choc.green.swap <- c("#E8D5A1", "#6F2919", "#98F95D")
+
+full.stack.plot(combined.data.long.prof, next.product, choc.green.swap)
+
+next.product <- product.vec[6] # this avoids having to change the subset number in multiple places 
+```
+
+# Cost and Margin for `r next.product`
+
+```{r product6, echo=FALSE, message=FALSE, warning=FALSE}
+choc.green <- c("#6F2919", "#E8D5A1", "#98F95D")
+
+component.plot2(combined.data.long, next.product, choc.green)
+
+choc.green.swap <- c("#E8D5A1", "#6F2919", "#98F95D")
+
+full.stack.plot(combined.data.long.prof, next.product, choc.green.swap)
+
+next.product <- product.vec[7] # this avoids having to change the subset number in multiple places 
+```
+
+# Cost and Margin for `r next.product`
+
+```{r product7, echo=FALSE, message=FALSE, warning=FALSE}
+choc.green <- c("#6F2919", "#E8D5A1", "#98F95D")
+
+component.plot2(combined.data.long, next.product, choc.green)
+
+choc.green.swap <- c("#E8D5A1", "#6F2919", "#98F95D")
+
+full.stack.plot(combined.data.long.prof, next.product, choc.green.swap)
+
+next.product <- product.vec[8] # this avoids having to change the subset number in multiple places 
+```
+
+# Cost and Margin for `r next.product`
+
+```{r product8, echo=FALSE, message=FALSE, warning=FALSE}
+choc.green <- c("#6F2919", "#E8D5A1", "#98F95D")
+
+component.plot2(combined.data.long, next.product, choc.green)
+
+choc.green.swap <- c("#E8D5A1", "#6F2919", "#98F95D")
+
+full.stack.plot(combined.data.long.prof, next.product, choc.green.swap)
+
+next.product <- product.vec[9] # this avoids having to change the subset number in multiple places 
+```
+
+# Cost and Margin for `r next.product`
+
+```{r product9, echo=FALSE, message=FALSE, warning=FALSE}
+choc.green <- c("#6F2919", "#E8D5A1", "#98F95D")
+
+component.plot2(combined.data.long, next.product, choc.green)
+
+choc.green.swap <- c("#E8D5A1", "#6F2919", "#98F95D")
+
+full.stack.plot(combined.data.long.prof, next.product, choc.green.swap)
+
+#next.product <- product.vec[2] # this avoids having to change the subset number in multiple places 
+```
